@@ -191,7 +191,7 @@ void SDM630Every250ms(void)
           break;
 
         case 22:
-//          Energy->import_active[0] = value;
+          Energy->import_active[0] = value;
           EnergyUpdateTotal();
           break;
       }
