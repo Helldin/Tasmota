@@ -1,7 +1,7 @@
 /*
   xnrg_10_sdm630.ino - Eastron SDM630-Modbus energy meter support for Tasmota
 
-  Copyright (C) 2021  Gennaro Tortone and Theo Arends
+  Copyright (C) 2019  Gennaro Tortone, Theo Arends and Pablo Zerón
 
   This program is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -40,33 +40,38 @@
 TasmotaModbus *Sdm630Modbus;
 
 const uint16_t sdm630_start_addresses[] {
-           // 3P4 3P3 1P2 Unit Description
-  0x0000,  //  +   -   +   V    Phase 1 line to neutral volts
-  0x0002,  //  +   -   -   V    Phase 2 line to neutral volts
-  0x0004,  //  +   -   -   V    Phase 3 line to neutral volts
-  0x0006,  //  +   +   +   A    Phase 1 current
-  0x0008,  //  +   +   -   A    Phase 2 current
-  0x000A,  //  +   +   -   A    Phase 3 current
-  0x000C,  //  +   -   +   W    Phase 1 power
-  0x000E,  //  +   -   +   W    Phase 2 power
-  0x0010,  //  +   -   -   W    Phase 3 power
-  0x0018,  //  +   -   +   VAr  Phase 1 volt amps reactive
-  0x001A,  //  +   -   -   VAr  Phase 2 volt amps reactive
-  0x001C,  //  +   -   -   VAr  Phase 3 volt amps reactive
-  0x001E,  //  +   -   +        Phase 1 power factor
-  0x0020,  //  +   -   -        Phase 2 power factor
-  0x0022,  //  +   -   -        Phase 3 power factor
-  0x0046,  //  +   +   +   Hz   Frequency of supply voltages
-//  0x0160,  //  +   +   +   kWh  Phase 1 export active energy
-//  0x0162,  //  +   +   +   kWh  Phase 2 export active energy
-//  0x0164,  //  +   +   +   kWh  Phase 3 export active energy
-  0x015A,  //  +   +   +   kWh  Phase 1 import active energy
-  0x015C,  //  +   +   +   kWh  Phase 2 import active energy
-  0x015E,  //  +   +   +   kWh  Phase 3 import active energy
-  0x0156   //  +   +   +   kWh  Total active energy
+  0x0000,  // L1 - SDM630_VOLTAGE [V]
+  0x0002,  // L2 - SDM630_VOLTAGE [V]
+  0x0004,  // L3 - SDM630_VOLTAGE [V]
+  0x0006,  // L1 - SDM630_CURRENT [A]
+  0x0008,  // L2 - SDM630_CURRENT [A]
+  0x000A,  // L3 - SDM630_CURRENT [A]
+  0x000C,  // L1 - SDM630_POWER [W]
+  0x000E,  // L2 - SDM630_POWER [W]
+  0x0010,  // L3 - SDM630_POWER [W]
+  0x0018,  // L1 - SDM630_REACTIVE_POWER [VAR]
+  0x001A,  // L2 - SDM630_REACTIVE_POWER [VAR]
+  0x001C,  // L3 - SDM630_REACTIVE_POWER [VAR]
+  0x001E,  // L1 - SDM630_POWER_FACTOR
+  0x0020,  // L2 - SDM630_POWER_FACTOR
+  0x0022,  // L3 - SDM630_POWER_FACTOR
+  0x0024,  // L1 - SD630_FASE_ANGLE [DEGREES]
+  0x0026,  // L2 - SD630_FASE_ANGLE [DEGREES]
+  0x0028,  // L3 - SD630_FASE_ANGLE [DEGREES]
+  0x0042,  // TOTAL FASE ANGLE [DEGREES]
+  0x0046,  // FREQUENCY [HZ]
+  0x0048,  // IMPORT ACTIVE [W]
+  0x004A,  // EXPORT ACTIVE [W]
+  0x004C,  // IMPORT REACTIVE [VAR]
+  0x004E,  // EXPORT REACTIVE [VAR]
+  0x0156  // Total - SDM630_TOTAL_ACTIVE_ENERGY [Wh]
 };
 
 struct SDM630 {
+  float import_active = NAN;
+  float import_reactive = 0;
+  float export_reactive = 0;
+  float phase_angle[4] = {0};
   uint8_t read_state = 0;
   uint8_t send_retry = 0;
 } Sdm630;
@@ -84,11 +89,11 @@ void SDM630Every250ms(void)
     AddLogBuffer(LOG_LEVEL_DEBUG_MORE, buffer, Sdm630Modbus->ReceiveCount());
 
     if (error) {
-      AddLog(LOG_LEVEL_DEBUG, PSTR("SDM: SDM630 error %d"), error);
+      AddLog_P2(LOG_LEVEL_DEBUG, PSTR("SDM: SDM630 error %d"), error);
     } else {
-      Energy->data_valid[0] = 0;
-      Energy->data_valid[1] = 0;
-      Energy->data_valid[2] = 0;
+      Energy.data_valid[0] = 0;
+      Energy.data_valid[1] = 0;
+      Energy.data_valid[2] = 0;
 
       //  0  1  2  3  4  5  6  7  8
       // SA FC BC Fh Fl Sh Sl Cl Ch
@@ -101,101 +106,108 @@ void SDM630Every250ms(void)
 
       switch(Sdm630.read_state) {
         case 0:
-          Energy->voltage[0] = value;
+          Energy.voltage[0] = value;
           break;
 
         case 1:
-          Energy->voltage[1] = value;
+          Energy.voltage[1] = value;
           break;
 
         case 2:
-          Energy->voltage[2] = value;
+          Energy.voltage[2] = value;
           break;
 
         case 3:
-          Energy->current[0] = value;
+          Energy.current[0] = value;
           break;
 
         case 4:
-          Energy->current[1] = value;
+          Energy.current[1] = value;
           break;
 
         case 5:
-          Energy->current[2] = value;
+          Energy.current[2] = value;
           break;
 
         case 6:
-          Energy->active_power[0] = value;
+          Energy.active_power[0] = value;
           break;
 
         case 7:
-          Energy->active_power[1] = value;
+          Energy.active_power[1] = value;
           break;
 
         case 8:
-          Energy->active_power[2] = value;
+          Energy.active_power[2] = value;
           break;
 
         case 9:
-          Energy->reactive_power[0] = value;
+          Energy.reactive_power[0] = value;
           break;
 
         case 10:
-          Energy->reactive_power[1] = value;
+          Energy.reactive_power[1] = value;
           break;
 
         case 11:
-          Energy->reactive_power[2] = value;
+          Energy.reactive_power[2] = value;
           break;
 
         case 12:
-          Energy->power_factor[0] = value;
+          Energy.power_factor[0] = value;
           break;
 
         case 13:
-          Energy->power_factor[1] = value;
+          Energy.power_factor[1] = value;
           break;
 
         case 14:
-          Energy->power_factor[2] = value;
+          Energy.power_factor[2] = value;
           break;
-
+        
         case 15:
-          Energy->frequency[0] = value;
+          Sdm630.phase_angle[0] = value;
           break;
-
- //       case 16:
- //         Energy->export_active[0] = value;
- //         break;
-
-//        case 17:
-//          Energy->export_active[1] = value;
-//          break;
-
-//        case 18:
-//          Energy->export_active[2] = value;
-//          break;
-
+        
         case 16:
-          Energy->import_active[0] = value;
+          Sdm630.phase_angle[1] = value;
           break;
-
+        
         case 17:
-          Energy->import_active[1] = value;
+          Sdm630.phase_angle[2] = value;
           break;
-
+        
         case 18:
-          Energy->import_active[2] = value;
+          Sdm630.phase_angle[3] = value;
+          break;
+        
+        case 19:
+          Energy.frequency[0] = value;        // 50.0 Hz
+          break;
+        
+        case 20:
+          Sdm630.import_active = value;    // 478.492 kWh
           break;
 
-        case 19:
-          Energy->import_active[0] = value;
-//          EnergyUpdateTotal();
+        case 21:
+          Energy.export_active = value;    // 6.216 kWh
+          break;
+
+        case 22:
+          Sdm630.import_reactive = value;  // 172.750 kVArh
+          break;
+
+        case 23:
+          Sdm630.export_reactive = value;  // 2.844 kVArh
+          break;
+
+        case 24:
+          EnergyUpdateTotal(value, true);
           break;
       }
 
       Sdm630.read_state++;
-      if (sizeof(sdm630_start_addresses)/2 == Sdm630.read_state) {
+      if (25 == Sdm630.read_state) {
         Sdm630.read_state = 0;
       }
     }
@@ -211,21 +223,72 @@ void SDM630Every250ms(void)
 
 void Sdm630SnsInit(void)
 {
-  Sdm630Modbus = new TasmotaModbus(Pin(GPIO_SDM630_RX), Pin(GPIO_SDM630_TX), Pin(GPIO_NRG_MBS_TX_ENA));
+  Sdm630Modbus = new TasmotaModbus(pin[GPIO_SDM630_RX], pin[GPIO_SDM630_TX]);
   uint8_t result = Sdm630Modbus->Begin(SDM630_SPEED);
   if (result) {
     if (2 == result) { ClaimSerial(); }
-    Energy->phase_count = 3;
-    Energy->frequency_common = true;             // Use common frequency
+    Energy.phase_count = 3;
   } else {
-    TasmotaGlobal.energy_driver = ENERGY_NONE;
+    energy_flg = ENERGY_NONE;
   }
 }
 
 void Sdm630DrvInit(void)
 {
-  if (PinUsed(GPIO_SDM630_RX) && PinUsed(GPIO_SDM630_TX)) {
-    TasmotaGlobal.energy_driver = XNRG_10;
+  if ((pin[GPIO_SDM630_RX] < 99) && (pin[GPIO_SDM630_TX] < 99)) {
+    energy_flg = XNRG_10;
+  }
+}
+
+void Sdm630Reset(void)
+{
+  if (isnan(Sdm630.import_active)) { return; }
+
+  Sdm630.import_active = 0;
+  Sdm630.import_reactive = 0;
+  Sdm630.export_reactive = 0;
+  Sdm630.phase_angle[0] = 0;
+  Sdm630.phase_angle[1] = 0;
+  Sdm630.phase_angle[2] = 0;
+  Sdm630.phase_angle[3] = 0;
+}
+
+#ifdef USE_WEBSERVER
+const char HTTP_ENERGY_SDM630[] PROGMEM =
+  "{s}" D_IMPORT_REACTIVE "{m}%s " D_UNIT_KWARH "{e}"
+  "{s}" D_EXPORT_REACTIVE "{m}%s " D_UNIT_KWARH "{e}"
+  "{s}" D_PHASE_ANGLE " L1{m}%s " D_UNIT_ANGLE "{e}"
+  "{s}" D_PHASE_ANGLE " L2{m}%s " D_UNIT_ANGLE "{e}"
+  "{s}" D_PHASE_ANGLE " L3{m}%s " D_UNIT_ANGLE "{e}"
+  "{s}" D_PHASE_ANGLE " TOTAL{m}%s " D_UNIT_ANGLE "{e}";
+#endif  // USE_WEBSERVER
+
+void Sdm630Show(bool json)
+{
+  if (isnan(Sdm630.import_active)) { return; }
+
+  char import_active_chr[FLOATSZ];
+  dtostrfd(Sdm630.import_active, Settings.flag2.energy_resolution, import_active_chr);
+  char import_reactive_chr[FLOATSZ];
+  dtostrfd(Sdm630.import_reactive, Settings.flag2.energy_resolution, import_reactive_chr);
+  char export_reactive_chr[FLOATSZ];
+  dtostrfd(Sdm630.export_reactive, Settings.flag2.energy_resolution, export_reactive_chr);
+  char phase_angle_l1_chr[FLOATSZ];
+  dtostrfd(Sdm630.phase_angle[0], 2, phase_angle_l1_chr);
+  char phase_angle_l2_chr[FLOATSZ];
+  dtostrfd(Sdm630.phase_angle[1], 2, phase_angle_l2_chr);
+  char phase_angle_l3_chr[FLOATSZ];
+  dtostrfd(Sdm630.phase_angle[2], 2, phase_angle_l3_chr);
+  char phase_angle_total_chr[FLOATSZ];
+  dtostrfd(Sdm630.phase_angle[3], 2, phase_angle_total_chr);
+
+  if (json) {
+    ResponseAppend_P(PSTR(",\"" D_JSON_IMPORT_ACTIVE "\":%s,\"" D_JSON_IMPORT_REACTIVE "\":%s,\"" D_JSON_EXPORT_REACTIVE "\":%s,\"" D_JSON_PHASE_ANGLE "\":%s"),
+      import_active_chr, import_reactive_chr, export_reactive_chr, phase_angle_total_chr);
+#ifdef USE_WEBSERVER
+  } else {
+    WSContentSend_PD(HTTP_ENERGY_SDM630, import_reactive_chr, export_reactive_chr,  phase_angle_l1_chr,  phase_angle_l2_chr,  phase_angle_l3_chr, phase_angle_total_chr);
+#endif  // USE_WEBSERVER
   }
 }
 
@@ -233,13 +296,24 @@ void Sdm630DrvInit(void)
  * Interface
 \*********************************************************************************************/
 
-bool Xnrg10(uint32_t function)
+bool Xnrg10(uint8_t function)
 {
   bool result = false;
 
   switch (function) {
     case FUNC_EVERY_250_MSECOND:
-      SDM630Every250ms();
+      if (uptime > 4) { SDM630Every250ms(); }
+      break;
+    case FUNC_JSON_APPEND:
+      Sdm630Show(1);
+      break;
+#ifdef USE_WEBSERVER
+    case FUNC_WEB_SENSOR:
+      Sdm630Show(0);
+      break;
+#endif  // USE_WEBSERVER
+    case FUNC_ENERGY_RESET:
+      Sdm630Reset();
       break;
     case FUNC_INIT:
       Sdm630SnsInit();
